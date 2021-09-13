@@ -1,21 +1,21 @@
 package ru.bulldog.justmap.event;
 
 import java.util.Queue;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ArrayBlockingQueue;
 
 import ru.bulldog.justmap.client.JustMapClient;
 import ru.bulldog.justmap.util.math.Plane;
 import ru.bulldog.justmap.util.tasks.TaskManager;
 
 public class ChunkUpdateListener {
-	private static Queue<ChunkUpdateEvent> updateQueue = new ConcurrentLinkedQueue<>();
+	private static Queue<ChunkUpdateEvent> updateQueue = new ArrayBlockingQueue<>(1024, true);
 	private static TaskManager worker = TaskManager.getManager("chunk-update-listener");
-	
+
 	public static void accept(ChunkUpdateEvent event) {
 		if (updateQueue.contains(event)) return;
 		updateQueue.offer(event);
 	}
-	
+
 	private static void updateChunks() {
 		if (updateQueue.isEmpty()) return;
 		if (!JustMapClient.canMapping()) {
@@ -42,12 +42,12 @@ public class ChunkUpdateListener {
 			}
 		}
 	}
-	
+
 	public static void proceed() {
 		if (updateQueue.isEmpty() || worker.queueSize() > 0) return;
 		worker.execute(ChunkUpdateListener::updateChunks);
 	}
-	
+
 	public static void stop() {
 		updateQueue.clear();
 	}

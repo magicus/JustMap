@@ -24,39 +24,41 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class ChunkData {
-	
+
 	public final static ChunkLevel EMPTY_LEVEL = new ChunkLevel(-1);
-	
+
 	private final static TaskManager chunkUpdater = TaskManager.getManager("chunk-updater", 2);
 	private static ClientNetworkHandler networkHandler = JustMapClient.getNetworkHandler();
-	
+
 	private final WorldData mapData;
 	private final Map<Layer, ChunkLevel[]> levels = new ConcurrentHashMap<>();
 	private final ChunkPos chunkPos;
 	private World world;
 	private SoftReference<WorldChunk> worldChunk;
+	private WorldChunk worldChunkReal;
 	private boolean outdated = false;
 	private boolean purged = false;
 	private boolean slime = false;
 	private boolean saved = true;
 	private long refreshed = 0;
-	
+
 	public boolean saving = false;
 	public long updated = 0;
 	public long requested = 0;
-	
+
 	private Object levelLock = new Object();
-	
+
 	public ChunkData(WorldData data, WorldChunk lifeChunk) {
 		this(data, lifeChunk.getPos());
 		this.updateWorldChunk(lifeChunk);
 	}
-	
+
 	public ChunkData(WorldData data, ChunkPos pos) {
 		this.mapData = data;
 		this.world = data.getWorld();
 		this.chunkPos = pos;
-		this.worldChunk = new SoftReference<>(world.getChunk(pos.x, pos.z));
+		//this.worldChunk = new SoftReference<>(world.getChunk(pos.x, pos.z));
+		this.worldChunkReal = world.getChunk(pos.x, pos.z);
 
 		if (Dimension.isOverworld(world)) {
 			ServerWorld serverWorld = DataUtil.getServerWorld();
@@ -76,28 +78,28 @@ public class ChunkData {
 			initLayer(Layer.CAVES);
 		}
 	}
-	
+
 	public ChunkData resetChunk() {
 		synchronized (levelLock) {
 			this.levels.clear();
 		}
 		this.outdated = true;
 		this.updated = 0;
-		
+
 		return this;
 	}
-	
+
 	private void initLayer(Layer layer) {
-		int levels = this.world.getDimensionHeight() / layer.height;		
+		int levels = this.world.getDimensionHeight() / layer.height;
 		this.levels.put(layer, new ChunkLevel[levels]);
 	}
-	
+
 	public ChunkLevel getChunkLevel(Layer layer, int level) {
 		synchronized (levelLock) {
 			if (!levels.containsKey(layer)) {
 				initLayer(layer);
 			}
-			
+
 			ChunkLevel chunkLevel;
 			try {
 				chunkLevel = this.levels.get(layer)[level];
@@ -118,43 +120,45 @@ public class ChunkData {
 			return chunkLevel;
 		}
 	}
-	
+
 	public ChunkPos getPos() {
 		return this.chunkPos;
 	}
-	
+
 	public int getX() {
 		return this.chunkPos.x;
 	}
-	
+
 	public int getZ() {
 		return this.chunkPos.z;
 	}
-	
+
 	public WorldChunk getWorldChunk() {
-		return this.worldChunk.get();
+//		return this.worldChunk.get();
+		return this.worldChunkReal;
 	}
-	
+
 	public BlockState getBlockState(Layer layer, int level, BlockPos pos) {
 		return this.getChunkLevel(layer, level).getBlockState(pos.getX() & 15, pos.getZ() & 15);
 	}
-	
+
 	public void setBlockState(Layer layer, int level, BlockPos pos, BlockState blockState) {
 		this.getChunkLevel(layer, level).setBlockState(pos.getX() & 15, pos.getZ() & 15, blockState);
 	}
-	
+
 	private boolean checkUpdating(Layer layer, int level) {
 		return this.getChunkLevel(layer, level).updating;
 	}
-	
+
 	public void updateWorldChunk(WorldChunk lifeChunk) {
 		if (lifeChunk != null && !lifeChunk.isEmpty()) {
-			this.worldChunk = new SoftReference<>(lifeChunk);
+			//this.worldChunk = new SoftReference<>(lifeChunk);
+			this.worldChunkReal = lifeChunk;
 		}
 	}
-	
+
 	public WorldChunk updateWorldChunk() {
-		WorldChunk currentChunk = this.worldChunk.get();
+		WorldChunk currentChunk = this.worldChunkReal; //this.worldChunk.get();
 		if(currentChunk == null || currentChunk.isEmpty()) {
 			WorldChunk lifeChunk = this.world.getChunk(getX(), getZ());
 			if (lifeChunk == null || lifeChunk.isEmpty()) {
@@ -165,11 +169,11 @@ public class ChunkData {
 		}
 		return currentChunk;
 	}
-	
+
 	public boolean updateFullChunk(Layer layer, int level, boolean forceUpdate) {
 		return this.updateChunkArea(layer, level, forceUpdate, 0, 0, 16, 16);
 	}
-	
+
 	public boolean updateChunkArea(Layer layer, int level, boolean forceUpdate, int x, int z, int width, int height) {
 		if (!JustMapClient.canMapping()) return false;
 		if (purged || checkUpdating(layer, level)) return false;
@@ -178,7 +182,7 @@ public class ChunkData {
 		}
 		long currentTime = System.currentTimeMillis();
 		if (!outdated && currentTime - updated < ClientSettings.chunkUpdateInterval) return false;
-		
+
 		WorldChunk worldChunk = this.updateWorldChunk();
 		chunkUpdater.execute(() -> {
 			if (worldChunk.isEmpty() || !this.isChunkLoaded()) return;
@@ -192,10 +196,10 @@ public class ChunkData {
 				}
 			}
 		});
-		
+
 		return true;
 	}
-	
+
 	private void updateHeighmap(WorldChunk worldChunk, Layer layer, int level, boolean skipWater, int x, int z, int width, int height) {
 		if (worldChunk.isEmpty()) return;
 		for (int sx = x; sx < width; sx++) {
@@ -205,13 +209,13 @@ public class ChunkData {
 				if (y != -1) {
 					chunkLevel.updateHeightmap(sx, sz, y);
 				} else if (chunkLevel.sampleHeightmap(sx, sz) != -1) {
-					chunkLevel.clear(sx, sz);					
+					chunkLevel.clear(sx, sz);
 					this.saved = false;
 				}
 			}
 		}
 	}
-	
+
 	private void updateArea(WorldChunk worldChunk, Layer layer, int level, int x, int z, int width, int height) {
 		ChunkLevel chunkLevel = this.getChunkLevel(layer, level);
 		chunkLevel.updating = true;
@@ -222,35 +226,36 @@ public class ChunkData {
 		if (currentTime - chunkLevel.updated > ClientSettings.chunkLevelUpdateInterval) {
 			this.updateHeighmap(worldChunk, layer, level, skipWater, x, z, width, height);
 		}
-		
+
+		BlockPos.Mutable mutPos = new BlockPos.Mutable(x, 0, 0);
 		for (int sx = x; sx < width; sx++) {
+			mutPos.setX(sx + (chunkPos.x << 4));
 			for (int sz = 0; sz < height; sz++) {
-				this.updateBlock(worldChunk, chunkLevel, layer, level, sx, sz, skipWater);
+				mutPos.setZ(sz + (chunkPos.z << 4));
+				this.updateBlock(worldChunk, chunkLevel, layer, level, mutPos, sx, sz, skipWater);
 			}
 		}
-		
+
 		this.updated = currentTime;
 		this.refreshed = currentTime;
 		this.outdated = false;
 
 		chunkLevel.updating = false;
 	}
-	
-	private void updateBlock(WorldChunk worldChunk, ChunkLevel chunkLevel, Layer layer, int level, int x, int z, boolean skipWater) {
+
+	private void updateBlock(WorldChunk worldChunk, ChunkLevel chunkLevel, Layer layer, int level, BlockPos.Mutable mutPos, int x, int z, boolean skipWater) {
 		int index = x + (z << 4);
-		int posX = x + (chunkPos.x << 4);
-		int posZ = z + (chunkPos.z << 4);
 		int posY = chunkLevel.sampleHeightmap(x, z);
-		
+
 		if (posY < 0) return;
-		
+
 		long currentTime = System.currentTimeMillis();
-		
-		BlockPos blockPos = new BlockPos(posX, posY, posZ);
-		BlockState blockState = this.getBlockState(layer, level, blockPos);
-		BlockState worldState = worldChunk.getBlockState(blockPos);
+		mutPos.setY(posY);
+
+		BlockState blockState = this.getBlockState(layer, level, mutPos);
+		BlockState worldState = worldChunk.getBlockState(mutPos);
 		if(outdated || !blockState.equals(worldState) || currentTime - refreshed > 60000) {
-			int color = ColorUtil.blockColor(worldChunk, blockPos);
+			int color = ColorUtil.blockColor(worldChunk, mutPos);
 			if (color == -1) return;
 
 			chunkLevel.setBlockState(x, z, worldState);
@@ -269,21 +274,21 @@ public class ChunkData {
 			}
 
 			float topoLevel = ((float) (posY - bottom) / baseHeight);
-			int heightDiff = MapProcessor.heightDifference(this, layer, level, x, posY, z, skipWater);
+			int heightDiff = MapProcessor.heightDifference(this, layer, level, mutPos, skipWater);
 			chunkLevel.topomap[index] = (int) (topoLevel * 100);
 			chunkLevel.levelmap[index] = heightDiff;
 			chunkLevel.colormap[index] = color;
 
 			this.saved = false;
 		} else if (chunkLevel.colormap[index] != -1) {
-			int heightDiff = MapProcessor.heightDifference(this, layer, level, x, posY, z, skipWater);
+			int heightDiff = MapProcessor.heightDifference(this, layer, level, mutPos, skipWater);
 			if (chunkLevel.levelmap[index] != heightDiff) {
 				chunkLevel.levelmap[index] = heightDiff;
 				this.saved = false;
 			}
 		}
 	}
-	
+
 	public int[] getColorData(Layer layer, int level) {
 		ChunkLevel chunkLevel = this.getChunkLevel(layer, level);
 		int[] colordata = new int[256];
@@ -295,11 +300,11 @@ public class ChunkData {
 		}
 		return colordata;
 	}
-	
+
 	public int getBlockColor(Layer layer, int level, int x, int z) {
 		return this.getBlockColor(getChunkLevel(layer, level), x + (z << 4));
 	}
-	
+
 	private int getBlockColor(ChunkLevel chunkLevel, int index) {
 		int color = chunkLevel.colormap[index];
 		if (color != -1) {
@@ -314,19 +319,19 @@ public class ChunkData {
 		}
 		return Colors.BLACK;
 	}
-	
+
 	public boolean saveNeeded() {
 		return !this.saved;
 	}
-	
+
 	public void setSaved() {
 		this.saved = true;
 	}
-	
+
 	public boolean isChunkLoaded() {
 		return this.world.isChunkLoaded(chunkPos.x, chunkPos.z);
 	}
-	
+
 	public boolean hasSlime() {
 		return this.slime;
 	}
